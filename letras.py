@@ -53,6 +53,11 @@ def raiz_canonica(titulo):
     return " ".join(t.split())
 
 
+# Descarta letras demasiado cortas que suelen ser instrumentales o tracks sin contenido real
+def es_ruido(letra, umbral=250):
+    return letra is None or len(letra) < umbral
+
+
 # Recorre la discografía de un artista en letras.com y devuelve todas sus canciones con metadatos
 def obtener_discografia(url_artista):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"}
@@ -93,6 +98,9 @@ def obtener_discografia(url_artista):
         if raiz not in catalogo:
             # Canción nueva, descargamos su letra
             datos = obtener_letra(url_cancion)
+            if es_ruido(datos["letra"]):
+                time.sleep(0.3)
+                continue
             datos["titulo"] = titulo_listado
             datos["album"] = nombre_album
             datos["año"] = año
@@ -103,6 +111,9 @@ def obtener_discografia(url_artista):
         elif tipo == "album" and catalogo[raiz].get("tipo") != "album":
             # La canción ya existía como single pero ahora aparece en un álbum oficial
             datos = obtener_letra(url_cancion)
+            if es_ruido(datos["letra"]):
+                time.sleep(0.3)
+                continue
             datos["titulo"] = titulo_listado
             datos["album"] = nombre_album
             datos["año"] = año
