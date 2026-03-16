@@ -211,9 +211,36 @@ def obtener_discografia(url_artista):
     return list(catalogo.values())
 
 
-# Guarda una lista de canciones como CSV
+# Lee un CSV, busca las letras de las canciones que no la tengan y las escribe de vuelta
+def completar_letras(ruta):
+    with open(ruta, "r", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        columnas = reader.fieldnames
+        filas = list(reader)
+
+    # Si no existe la columna lyrics, la creamos
+    if "lyrics" not in columnas:
+        columnas.append("lyrics")
+
+    pendientes = [i for i, fila in enumerate(filas) if not fila.get("lyrics")]
+
+    for i in tqdm(pendientes, desc="Completando letras"):
+        fila = filas[i]
+        resultado = buscar_cancion(fila["track"], fila["artist"])
+        fila["lyrics"] = resultado["letra"] if resultado else ""
+
+        # Guardamos el CSV entero después de cada canción
+        with open(ruta, "w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.DictWriter(f, fieldnames=columnas)
+            writer.writeheader()
+            writer.writerows(filas)
+
+        time.sleep(0.3)
+
+
+# Guarda una lista de canciones como CSV, usando las claves del primer diccionario como cabecera
 def guardar_canciones_csv(canciones, ruta):
-    columnas = ["titulo", "artista", "album", "año", "tipo", "letra"]
+    columnas = list(canciones[0].keys())
     with open(ruta, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.writer(f)
         writer.writerow(columnas)
