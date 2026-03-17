@@ -1,10 +1,10 @@
 # Cargamos las librerías necesarias
-import csv
 import re
 import time
 import requests
 from bs4 import BeautifulSoup
 from tqdm import tqdm
+from utilities import leer_csv, escribir_csv
 
 
 # Genera una raíz normalizada del título para detectar duplicados entre versiones de la misma canción
@@ -18,16 +18,6 @@ def raiz_canonica(titulo):
     # Nos quedamos solo con letras y números para normalizar la comparación
     t = re.sub(r"[^a-z0-9\s]", "", t)
     return " ".join(t.split())
-
-
-# Guarda una lista de diccionarios como CSV, usando las claves del primero como cabecera
-def guardar_canciones_csv(canciones, ruta):
-    columnas = list(canciones[0].keys())
-    with open(ruta, "w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.writer(f)
-        writer.writerow(columnas)
-        for cancion in canciones:
-            writer.writerow([cancion.get(col, "") for col in columnas])
 
 
 # Headers para las peticiones a letras.com
@@ -167,10 +157,7 @@ def buscar_letra(titulo, artista):
 
 # Lee un CSV, busca las letras de las canciones que no la tengan y las escribe de vuelta
 def añadir_letras(ruta):
-    with open(ruta, "r", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        columnas = list(reader.fieldnames)
-        filas = list(reader)
+    columnas, filas = leer_csv(ruta)
 
     # Si no existen las columnas de letra y fuente, las creamos
     if "lyrics" not in columnas:
@@ -187,7 +174,4 @@ def añadir_letras(ruta):
         fila["source"] = fuente or ""
 
         # Guardamos el CSV entero después de cada canción
-        with open(ruta, "w", newline="", encoding="utf-8-sig") as f:
-            writer = csv.DictWriter(f, fieldnames=columnas)
-            writer.writeheader()
-            writer.writerows(filas)
+        escribir_csv(ruta, columnas, filas)

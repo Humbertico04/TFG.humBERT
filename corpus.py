@@ -1,9 +1,9 @@
 # Funciones para la construcción y curación del corpus de entrenamiento
 # No forman parte del pipeline de clasificación, son herramientas para generar el dataset
-import csv
 from letras import raiz_canonica, buscar_letra
 from spotify import sp
 from tqdm import tqdm
+from utilities import leer_csv, escribir_csv
 
 
 # Descarta letras demasiado cortas que suelen ser instrumentales o tracks sin contenido real
@@ -101,10 +101,7 @@ def obtener_discografia(artista, top_n=None):
 
 # Repesca letras vacías o ruidosas en una discografía probando los títulos alternativos
 def completar_discografia(ruta):
-    with open(ruta, "r", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        columnas = list(reader.fieldnames)
-        filas = list(reader)
+    columnas, filas = leer_csv(ruta)
 
     if "lyrics" not in columnas:
         columnas.append("lyrics")
@@ -131,24 +128,12 @@ def completar_discografia(ruta):
                 fila["track"] = titulo
                 break
 
-        with open(ruta, "w", newline="", encoding="utf-8-sig") as f:
-            writer = csv.DictWriter(f, fieldnames=columnas)
-            writer.writeheader()
-            writer.writerows(filas)
+        escribir_csv(ruta, columnas, filas)
 
 
 # Recorre un CSV y elimina las filas cuya letra es ruido (vacía o demasiado corta)
 def filtrar_ruido(ruta, umbral=250):
-    with open(ruta, "r", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        columnas = list(reader.fieldnames)
-        filas = list(reader)
-
+    columnas, filas = leer_csv(ruta)
     filas_limpias = [fila for fila in filas if not es_ruido(fila.get("lyrics"), umbral)]
-
-    with open(ruta, "w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.DictWriter(f, fieldnames=columnas)
-        writer.writeheader()
-        writer.writerows(filas_limpias)
-
+    escribir_csv(ruta, columnas, filas_limpias)
     return len(filas) - len(filas_limpias)
