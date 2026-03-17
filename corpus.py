@@ -1,8 +1,14 @@
 # Funciones para la construcción y curación del corpus de entrenamiento
 # No forman parte del pipeline de clasificación, son herramientas para generar el dataset
-from letras import raiz_canonica
+import csv
+from letras import raiz_canonica, buscar_letra
 from spotify import sp
 from tqdm import tqdm
+
+
+# Descarta letras demasiado cortas que suelen ser instrumentales o tracks sin contenido real
+def es_ruido(letra, umbral=250):
+    return letra is None or len(letra) < umbral
 
 
 # Busca un artista en Spotify por nombre y devuelve su ID
@@ -45,7 +51,9 @@ def obtener_discografia(artista, top_n=None):
     albums.sort(key=lambda x: x["release_date"])
 
     # Extraemos las canciones de cada álbum y deduplicamos por raíz canónica
+    # Guardamos todas las versiones como alternativas para fallback de letras
     catalogo = {}
+    alternativas = {}
     for album in tqdm(albums, desc="Extrayendo discografía"):
         tracks_resultado = sp.album_tracks(album["id"])
         tracks = tracks_resultado["items"]
@@ -66,14 +74,81 @@ def obtener_discografia(artista, top_n=None):
             }
 
             if raiz not in catalogo:
-                # Primera aparición de esta canción, nos la quedamos
                 catalogo[raiz] = cancion
+                alternativas[raiz] = []
             elif album["release_date"] == catalogo[raiz]["release_date"]:
-                # Misma fecha: nos quedamos con el título más corto (sin sufijos)
                 if len(track["name"]) < len(catalogo[raiz]["track"]):
+                    # El ganador actual pasa a ser alternativa
+                    alternativas[raiz].append(catalogo[raiz]["track"])
                     catalogo[raiz] = cancion
+                else:
+                    alternativas[raiz].append(track["name"])
             elif album["album_type"] == "album" and catalogo[raiz]["album_type"] != "album":
-                # La canción existía como single pero ahora aparece en un álbum oficial
+                alternativas[raiz].insert(0, catalogo[raiz]["track"])
                 catalogo[raiz] = cancion
+            else:
+                alternativas[raiz].append(track["name"])
+
+    # Añadimos las alternativas (sin duplicados) a cada canción
+    for raiz, cancion in catalogo.items():
+        titulos_unicos = list(dict.fromkeys(
+            t for t in alternativas[raiz] if t != cancion["track"]
+        ))
+        cancion["alternatives"] = "|".join(titulos_unicos)
 
     return list(catalogo.values())
+
+
+# Repesca letras vacías o ruidosas en una discografía probando los títulos alternativos
+def completar_discografia(ruta):
+    with open(ruta, "r", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        columnas = list(reader.fieldnames)
+        filas = list(reader)
+
+    if "lyrics" not in columnas:
+        columnas.append("lyrics")
+    if "source" not in columnas:
+        columnas.append("source")
+
+    # Revisamos tanto las filas vacías como las que tienen letra ruidosa (instrumentales, etc.)
+    pendientes = [i for i, fila in enumerate(filas) if es_ruido(fila.get("lyrics"))]
+
+    for i in tqdm(pendientes, desc="Completando con alternativas"):
+        fila = filas[i]
+        artista = fila["artist"]
+
+        # Si no hay alternativas guardadas, no hay nada que probar
+        if not fila.get("alternatives"):
+            continue
+
+        for titulo in fila["alternatives"].split("|"):
+            letra, fuente = buscar_letra(titulo, artista)
+            if letra and not es_ruido(letra):
+                fila["lyrics"] = letra
+                fila["source"] = fuente
+                # Adoptamos el título alternativo que sí ha funcionado
+                fila["track"] = titulo
+                break
+
+        with open(ruta, "w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.DictWriter(f, fieldnames=columnas)
+            writer.writeheader()
+            writer.writerows(filas)
+
+
+# Recorre un CSV y elimina las filas cuya letra es ruido (vacía o demasiado corta)
+def filtrar_ruido(ruta, umbral=250):
+    with open(ruta, "r", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        columnas = list(reader.fieldnames)
+        filas = list(reader)
+
+    filas_limpias = [fila for fila in filas if not es_ruido(fila.get("lyrics"), umbral)]
+
+    with open(ruta, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.DictWriter(f, fieldnames=columnas)
+        writer.writeheader()
+        writer.writerows(filas_limpias)
+
+    return len(filas) - len(filas_limpias)

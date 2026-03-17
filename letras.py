@@ -20,11 +20,6 @@ def raiz_canonica(titulo):
     return " ".join(t.split())
 
 
-# Descarta letras demasiado cortas que suelen ser instrumentales o tracks sin contenido real
-def es_ruido(letra, umbral=250):
-    return letra is None or len(letra) < umbral
-
-
 # Guarda una lista de diccionarios como CSV, usando las claves del primero como cabecera
 def guardar_canciones_csv(canciones, ruta):
     columnas = list(canciones[0].keys())
