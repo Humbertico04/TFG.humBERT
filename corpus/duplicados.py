@@ -57,3 +57,37 @@ def eliminar_duplicados(ruta_csv, umbral=0.80):
     filas_limpias = [fila for k, fila in enumerate(filas) if k not in a_eliminar]
     escribir_csv(ruta_csv, columnas, filas_limpias)
     print(f"\nEliminadas {len(a_eliminar)} canciones, quedan {len(filas_limpias)}")
+
+
+# Detecta qué canciones de un CSV nuevo ya están en un CSV master
+def encontrar_solapamiento(filas_master, filas_nuevas, umbral=0.80):
+    letras_master = [fila.get("lyrics", "") for fila in filas_master]
+    letras_nuevas = [fila.get("lyrics", "") for fila in filas_nuevas]
+
+    # Ajustamos el vocabulario sobre ambos CSVs para que las representaciones sean comparables
+    vectorizador = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5), min_df=2)
+    vectorizador.fit(letras_master + letras_nuevas)
+
+    matriz_master = vectorizador.transform(letras_master)
+    matriz_nuevas = vectorizador.transform(letras_nuevas)
+
+    # Similitud cruzada: filas = canciones nuevas, columnas = canciones del master
+    matriz_sim = cosine_similarity(matriz_nuevas, matriz_master)
+
+    nuevas_idx, master_idx = np.where(matriz_sim > umbral)
+    pares = [(int(i), int(j), float(matriz_sim[i, j])) for i, j in zip(nuevas_idx, master_idx)]
+    pares.sort(key=lambda p: p[2], reverse=True)
+    return pares
+
+
+# Elimina de un CSV nuevo todas las canciones que ya están en un CSV master
+def eliminar_solapamiento(ruta_master, ruta_nuevas, umbral=0.80):
+    _, filas_master = leer_csv(ruta_master)
+    columnas, filas_nuevas = leer_csv(ruta_nuevas)
+
+    pares = encontrar_solapamiento(filas_master, filas_nuevas, umbral=umbral)
+    a_eliminar = {i for i, _, _ in pares}
+
+    filas_limpias = [fila for k, fila in enumerate(filas_nuevas) if k not in a_eliminar]
+    escribir_csv(ruta_nuevas, columnas, filas_limpias)
+    return len(a_eliminar)
