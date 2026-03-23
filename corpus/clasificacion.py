@@ -1,7 +1,9 @@
 # Clasificación masiva de canciones vía Together AI con ensemble de tres runs
-# Checkpointea tras cada canción para poder reanudar si se interrumpe
+# Procesa runs vacíos y con error en paralelo, con checkpoint tras cada canción
 import os
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 from together import Together
 from tqdm import tqdm
@@ -48,38 +50,36 @@ def clasificar_cancion(artista, titulo, letra, prompt):
     return justificacion, extraer_vector(justificacion)
 
 
-# Cuenta cuántos runs quedan por hacer en una canción, de 0 (completa) a 3 (sin tocar)
-def runs_pendientes(fila):
-    hechos = 0
-    for i in range(1, 4):
-        if fila.get(f"justificacion_{i}"):
-            hechos += 1
-        else:
-            break
-    return 3 - hechos
+# Devuelve qué runs de una canción necesitan procesarse: los vacíos o los que dieron error
+def runs_a_procesar(fila):
+    pendientes = []
+    for n in range(1, 4):
+        vector = (fila.get(f"vector_{n}") or "").strip()
+        if not vector or vector.upper().startswith("ERROR"):
+            pendientes.append(n)
+    return pendientes
 
 
-# Recorre el CSV haciendo tres runs por canción y guardando después de cada una
-def clasificar_canciones(ruta_csv, ruta_prompt):
+# Recorre el CSV procesando en paralelo todos los runs pendientes de cada canción
+def clasificar_canciones(ruta_csv, ruta_prompt, workers=50):
     columnas, filas = leer_csv(ruta_csv)
 
-    # Creamos las columnas del ensemble si no existen
-    for i in range(1, 4):
-        for col in (f"justificacion_{i}", f"vector_{i}"):
+    # Creamos las columnas del ensemble si no existen para mantener el orden
+    for n in range(1, 4):
+        for col in (f"justificacion_{n}", f"vector_{n}"):
             if col not in columnas:
                 columnas.append(col)
 
     with open(ruta_prompt, "r", encoding="utf-8") as f:
         prompt = f.read()
 
-    pendientes = [i for i, fila in enumerate(filas) if runs_pendientes(fila) > 0]
+    pendientes = [(i, runs) for i, fila in enumerate(filas) if (runs := runs_a_procesar(fila))]
 
-    for i in tqdm(pendientes, desc="Clasificando canciones"):
+    csv_lock = threading.Lock()
+
+    def procesar_una(i, runs):
         fila = filas[i]
-
-        # Empezamos por el primer run que falte en esta canción
-        run_inicial = 4 - runs_pendientes(fila)
-        for run in range(run_inicial, 4):
+        for run in runs:
             try:
                 justificacion, vector = clasificar_cancion(
                     fila["artist"], fila["track"], fila["lyrics"], prompt
@@ -89,6 +89,12 @@ def clasificar_canciones(ruta_csv, ruta_prompt):
             except Exception as e:
                 fila[f"justificacion_{run}"] = f"ERROR: {e}"
                 fila[f"vector_{run}"] = "ERROR"
+        return i
 
-        # Checkpoint tras cada canción: si se cae el script no se pierde el trabajo
-        escribir_csv(ruta_csv, columnas, filas)
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = [executor.submit(procesar_una, i, runs) for i, runs in pendientes]
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Clasificando canciones"):
+            future.result()
+            # Checkpoint thread-safe tras cada canción terminada
+            with csv_lock:
+                escribir_csv(ruta_csv, columnas, filas)
