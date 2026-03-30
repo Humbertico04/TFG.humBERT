@@ -27,6 +27,15 @@ _headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit
 _cache_indices = {}
 
 
+# Elimina anotaciones entre corchetes como [Verse 1] o [Chorus] que ensucian la letra
+def limpiar_brackets(texto):
+    if not texto:
+        return texto
+    sin_brackets = re.sub(r"\[.*?\]", "", texto)
+    # Colapsamos los saltos de línea triples que quedan al borrar [Chorus] entre estrofas
+    return re.sub(r"\n\s*\n\s*\n+", "\n\n", sin_brackets).strip()
+
+
 # Extrae la letra de una canción desde su URL en letras.com
 def extraer_letra(url):
     response = requests.get(url, headers=_headers, timeout=10)
@@ -40,7 +49,8 @@ def extraer_letra(url):
     # Sacamos cada párrafo por separado y los unimos con doble salto de línea para preservar las estrofas
     if container is not None:
         parrafos = [p.get_text(separator="\n", strip=True) for p in container.find_all("p")]
-        return "\n\n".join(parrafos) if parrafos else container.get_text(separator="\n", strip=True)
+        letra = "\n\n".join(parrafos) if parrafos else container.get_text(separator="\n", strip=True)
+        return limpiar_brackets(letra)
 
     return None
 
