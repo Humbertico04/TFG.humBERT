@@ -16,18 +16,21 @@ sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
 ))
 
 
+# Acumula los items de un endpoint paginado de Spotify recorriendo todas las páginas
+def todas_paginas(resultado):
+    items = resultado["items"]
+    while resultado["next"]:
+        resultado = sp.next(resultado)
+        items.extend(resultado["items"])
+    return items
+
+
 # Extrae las canciones de una playlist de Spotify y devuelve una lista de diccionarios
 def obtener_playlist(playlist_id):
-    resultados = sp.playlist_items(playlist_id)
-    tracks = resultados["items"]
-
-    # Si la playlist tiene más de cien canciones, Spotify las entrega en varias páginas
-    while resultados["next"]:
-        resultados = sp.next(resultados)
-        tracks.extend(resultados["items"])
+    items = todas_paginas(sp.playlist_items(playlist_id))
 
     canciones = []
-    for item in tracks:
+    for item in items:
         track = item["track"]
         canciones.append({
             "track": track["name"],
