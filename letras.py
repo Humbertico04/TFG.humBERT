@@ -1,7 +1,9 @@
 # Cargamos las librerías necesarias
 import re
 import time
+import threading
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 from utilities import leer_csv, escribir_csv
@@ -120,18 +122,37 @@ def buscar_en_artista(url_artista, titulo):
     return mejor
 
 
-# Busca la letra de una canción en LRCLib por título y artista
-def buscar_letra_lrclib(titulo, artista):
-    try:
-        r = requests.get("https://lrclib.net/api/get", params={
-            "artist_name": artista,
-            "track_name": titulo,
-        }, timeout=10)
-        if r.status_code != 200:
-            return None
-        return r.json().get("plainLyrics") or None
-    except Exception:
-        return None
+# Busca la letra en LRCLib con reintentos y devuelve la tupla (letra, status)
+def buscar_letra_lrclib(titulo, artista, timeout=30, reintentos=2):
+    pausas = (2, 5, 10)
+
+    for intento in range(reintentos + 1):
+        try:
+            r = requests.get("https://lrclib.net/api/get", params={
+                "artist_name": artista,
+                "track_name": titulo,
+            }, timeout=timeout)
+
+            # Una canción que no existe en LRCLib es estado terminal y no la volvemos a intentar
+            if r.status_code == 404:
+                return None, "NOT_FOUND"
+
+            if r.status_code == 200:
+                data = r.json()
+                # Si es instrumental no tiene sentido buscar letra en ningún sitio
+                if isinstance(data, dict) and data.get("instrumental"):
+                    return None, "INSTRUMENTAL"
+                letra = data.get("plainLyrics") if isinstance(data, dict) else None
+                if letra:
+                    return letra, "FOUND"
+            # Cualquier otra respuesta se considera transitoria y se reintenta
+        except (requests.RequestException, ValueError):
+            pass
+
+        if intento < reintentos:
+            time.sleep(pausas[min(intento, len(pausas) - 1)])
+
+    return None, ""
 
 
 # Busca la letra de una canción en letras.com por título y artista
@@ -152,36 +173,53 @@ def buscar_letra_scraping(titulo, artista):
     return None
 
 
-# Busca la letra de una canción probando primero LRCLib y después letras.com como fallback
-def buscar_letra(titulo, artista):
-    letra = buscar_letra_lrclib(titulo, artista)
-    if letra:
-        return letra, "lrclib"
+# Busca la letra probando primero LRCLib y, si fallback está activado, letras.com como respaldo
+def buscar_letra(titulo, artista, fallback=True):
+    letra, status = buscar_letra_lrclib(titulo, artista)
+    if status == "FOUND":
+        return letra, "FOUND"
 
-    letra = buscar_letra_scraping(titulo, artista)
-    if letra:
-        return letra, "letras.com"
+    # Instrumental es terminal en cualquier caso, no tiene sentido buscar letra en letras.com
+    if status == "INSTRUMENTAL":
+        return None, "INSTRUMENTAL"
 
-    return None, None
+    # Si LRCLib no la encontró o falló y el fallback está activo, probamos letras.com
+    if fallback:
+        letra = buscar_letra_scraping(titulo, artista)
+        if letra:
+            return letra, "FOUND"
+
+    return None, status
 
 
-# Lee un CSV, busca las letras de las canciones que no la tengan y las escribe de vuelta
-def añadir_letras(ruta):
+# Lee un CSV y busca en paralelo las letras de las canciones pendientes
+def añadir_letras(ruta, fallback=True, workers=16):
     columnas, filas = leer_csv(ruta)
 
-    # Si no existen las columnas de letra y fuente, las creamos
-    if "lyrics" not in columnas:
-        columnas.append("lyrics")
-    if "source" not in columnas:
-        columnas.append("source")
+    # Creamos las columnas si no existen
+    for col in ("lyrics", "lyrics_status"):
+        if col not in columnas:
+            columnas.append(col)
 
-    pendientes = [i for i, fila in enumerate(filas) if not fila.get("lyrics")]
+    # Recogemos las filas sin letra y sin estado terminal previo, las NOT_FOUND e INSTRUMENTAL ya verificadas se saltan
+    pendientes = [
+        i for i, fila in enumerate(filas)
+        if not fila.get("lyrics") and not fila.get("lyrics_status")
+    ]
 
-    for i in tqdm(pendientes, desc="Completando letras"):
+    csv_lock = threading.Lock()
+
+    def procesar_una(i):
         fila = filas[i]
-        letra, fuente = buscar_letra(fila["track"], fila["artist"])
+        letra, status = buscar_letra(fila["track"], fila["artist"], fallback=fallback)
         fila["lyrics"] = letra or ""
-        fila["source"] = fuente or ""
+        fila["lyrics_status"] = status
+        return i
 
-        # Guardamos el CSV entero después de cada canción
-        escribir_csv(ruta, columnas, filas)
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = [executor.submit(procesar_una, i) for i in pendientes]
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Completando letras"):
+            future.result()
+            # Checkpoint thread-safe tras cada canción terminada
+            with csv_lock:
+                escribir_csv(ruta, columnas, filas)
