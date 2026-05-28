@@ -6,6 +6,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from bs4 import BeautifulSoup
 from tqdm import tqdm
+from normalizacion import limpiar_letra
 from utilities import leer_csv, escribir_csv
 
 
@@ -29,23 +30,11 @@ _headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit
 _cache_indices = {}
 
 
-# Elimina anotaciones entre corchetes como [Verse 1] o [Chorus] que ensucian la letra
-def limpiar_brackets(texto):
-    if not texto:
-        return texto
-    sin_brackets = re.sub(r"\[.*?\]", "", texto)
-    # Colapsamos los saltos de línea triples que quedan al borrar [Chorus] entre estrofas
-    sin_brackets = re.sub(r"\n\s*\n\s*\n+", "\n\n", sin_brackets)
-    # Limpia líneas que empiezan por espacio al quitar un bracket al inicio
-    sin_brackets = sin_brackets.replace("\n ", "\n")
-    return sin_brackets.strip()
-
-
-# Recorre un CSV y aplica limpiar_brackets a la columna lyrics de cada fila
+# Recorre un CSV y aplica limpiar_letra a la columna lyrics de cada fila
 def limpiar_letras(ruta):
     columnas, filas = leer_csv(ruta)
-    for fila in tqdm(filas, desc="Limpiando brackets"):
-        fila["lyrics"] = limpiar_brackets(fila.get("lyrics", ""))
+    for fila in tqdm(filas, desc="Limpiando letras"):
+        fila["lyrics"] = limpiar_letra(fila.get("lyrics", ""))
     escribir_csv(ruta, columnas, filas)
 
 
@@ -63,7 +52,7 @@ def extraer_letra(url):
     if container is not None:
         parrafos = [p.get_text(separator="\n", strip=True) for p in container.find_all("p")]
         letra = "\n\n".join(parrafos) if parrafos else container.get_text(separator="\n", strip=True)
-        return limpiar_brackets(letra)
+        return limpiar_letra(letra)
 
     return None
 
