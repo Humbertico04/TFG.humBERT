@@ -35,7 +35,18 @@ def limpiar_brackets(texto):
         return texto
     sin_brackets = re.sub(r"\[.*?\]", "", texto)
     # Colapsamos los saltos de línea triples que quedan al borrar [Chorus] entre estrofas
-    return re.sub(r"\n\s*\n\s*\n+", "\n\n", sin_brackets).strip()
+    sin_brackets = re.sub(r"\n\s*\n\s*\n+", "\n\n", sin_brackets)
+    # Limpia líneas que empiezan por espacio al quitar un bracket al inicio
+    sin_brackets = sin_brackets.replace("\n ", "\n")
+    return sin_brackets.strip()
+
+
+# Recorre un CSV y aplica limpiar_brackets a la columna lyrics de cada fila
+def limpiar_letras(ruta):
+    columnas, filas = leer_csv(ruta)
+    for fila in tqdm(filas, desc="Limpiando brackets"):
+        fila["lyrics"] = limpiar_brackets(fila.get("lyrics", ""))
+    escribir_csv(ruta, columnas, filas)
 
 
 # Extrae la letra de una canción desde su URL en letras.com
